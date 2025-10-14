@@ -297,6 +297,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           "required": ["collection"]
         }
+      },
+      {
+        "name": "typesense_list_collections",
+        "description": "List all available Typesense collections with their schemas. Allows zero-conf discovery and routing - the LLM can enumerate collections at runtime and pick the right one(s) before searching. Useful when collections vary by environment, tenant, or version. Returns field definitions for schema inference.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "include_fields": {
+              "type": "boolean",
+              "description": "Include detailed field schemas for each collection (default: true)",
+              "default": true
+            }
+          }
+        }
       }
     ]
   };
@@ -377,7 +391,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!collection) {
         throw new Error("Missing required parameter: 'collection'");
       }
-      
+
       try {
         // Get collection
         const collectionData = await typesenseClient.collections(collection as string).retrieve();
@@ -394,7 +408,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Failed to get stats for collection '${collection}': Unknown error`);
       }
     }
-    
+
+    case "typesense_list_collections": {
+      const { include_fields = true } = request.params.arguments || {};
+
+      try {
+        // Fetch all collections
+        const collections = await typesenseClient.collections().retrieve();
+
+        if (!include_fields) {
+          // Return just collection names and basic info
+          const basicInfo = collections.map((col: any) => ({
+            name: col.name,
+            num_documents: col.num_documents || 0,
+            created_at: col.created_at
+          }));
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                collections: basicInfo,
+                count: basicInfo.length
+              }, null, 2)
+            }]
+          };
+        }
+
+        // Return full collection details with field schemas
+        const detailedCollections = [];
+        for (const col of collections) {
+          try {
+            const collectionDetail = await typesenseClient.collections(col.name).retrieve();
+            detailedCollections.push({
+              name: collectionDetail.name,
+              num_documents: collectionDetail.num_documents || 0,
+              created_at: collectionDetail.created_at,
+              fields: collectionDetail.fields || [],
+              default_sorting_field: collectionDetail.default_sorting_field
+            });
+          } catch (error) {
+            logger.error(`Error fetching details for collection ${col.name}:`, error);
+            // Include basic info even if detailed fetch fails
+            detailedCollections.push({
+              name: col.name,
+              num_documents: col.num_documents || 0,
+              error: 'Failed to fetch detailed schema'
+            });
+          }
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              collections: detailedCollections,
+              count: detailedCollections.length
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof Error) {
+          throw new Error(`Failed to list collections: ${error.message}`);
+        }
+        throw new Error(`Failed to list collections: Unknown error`);
+      }
+    }
+
     default:
       throw new Error(`Unknown tool: ${request.params.name}`);
   }

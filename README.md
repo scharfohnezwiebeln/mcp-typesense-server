@@ -129,6 +129,25 @@ The server provides information about Typesense collections:
   - Includes field names and data types
   - Sample documents for understanding data structure
 
+### Tools
+
+The server provides the following tools for interacting with Typesense:
+
+- **typesense_list_collections** - List all available collections with their schemas
+  - Enables zero-conf discovery and routing
+  - LLM can enumerate collections at runtime and pick the right one(s) before searching
+  - Useful when collections vary by environment, tenant, or version
+  - Returns field definitions for schema inference (searchable, facetable, numeric fields)
+  - Supports `include_fields` parameter to control detail level
+
+- **typesense_query** - Search for documents in a collection
+  - Full-text search with customizable parameters
+  - Supports filtering, sorting, and pagination
+
+- **typesense_get_document** - Retrieve a specific document by ID
+
+- **typesense_collection_stats** - Get detailed statistics about a specific collection
+
 ### Resource Templates
 
 The server provides templates for:
