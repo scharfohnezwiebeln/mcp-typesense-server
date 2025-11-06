@@ -4,7 +4,6 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -18,6 +17,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as TypesenseModule from 'typesense';
+import express from 'express';
+import {StreamableHTTPServerTransport} from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 interface TypesenseCollection {
   name: string;
@@ -25,32 +26,16 @@ interface TypesenseCollection {
   [key: string]: any;
 }
 
-const logFile = path.join(os.tmpdir(), 'typesense-mcp.log');
-
-fs.writeFileSync(logFile, `[INFO] ${new Date().toISOString()} - Starting Typesense MCP Server...\n`);
-
-
-console.log = (...args) => {
-  const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
-  fs.appendFileSync(logFile, `[INFO] ${new Date().toISOString()} - ${message}\n`);
-};
-
-console.error = (...args) => {
-  const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
-  fs.appendFileSync(logFile, `[ERROR] ${new Date().toISOString()} - ${message}\n`);
-};
-
 const logger = {
   log: (message: string) => {
-    fs.appendFileSync(logFile, `[INFO] ${new Date().toISOString()} - ${message}\n`);
+    console.log(`[INFO] ${new Date().toISOString()} - ${message}`);
   },
   error: (message: string, error?: any) => {
-    fs.appendFileSync(logFile, `[ERROR] ${new Date().toISOString()} - ${message}\n`);
-    if (error) {
-      fs.appendFileSync(logFile, `${error.stack || error}\n`);
-    }
+    console.error(`[ERROR] ${new Date().toISOString()} - ${message}`, error)
   }
 };
+
+logger.log(`[INFO] ${new Date().toISOString()} - Starting Typesense MCP Server...`);
 
 type TypesenseConfig = {
   host: string;
@@ -698,11 +683,42 @@ async function main() {
       logger.error('Typesense connection test failed:', error);
     }
 
-    logger.log('Connecting to stdio transport...');
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    // --- HTTP server wiring (MCP over Streamable HTTP) ---
+    const app = express();
+    app.use(express.json());
 
-    logger.log('MCP server connected and ready');
+    // Single MCP endpoint – this is your "webserver" entrypoint
+    app.post('/', async (req, res) => {
+      try {
+        // Create a fresh transport per request (avoids request-id collisions)
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,  // stateless
+          enableJsonResponse: true       // respond as plain JSON instead of chunks
+        });
+
+        res.on('close', () => {
+          transport.close();
+        });
+
+        // Connect low-level Server to this transport
+        await server.connect(transport);
+        // Let the transport handle this HTTP request
+        await transport.handleRequest(req, res, req.body);
+      } catch (err: any) {
+        logger.error('Error handling request:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: err?.message ?? 'Internal server error' });
+        }
+      }
+    });
+
+    const port = 3333;
+    app.listen(port, () => {
+      logger.log(`MCP HTTP server listening at http://localhost:${port}`);
+    }).on('error', (error) => {
+      logger.error('HTTP server error:', error);
+      process.exit(1);
+    });
 
   } catch (error) {
     logger.error('Error running MCP server:', error);
@@ -710,4 +726,4 @@ async function main() {
   }
 }
 
-main().catch(err => logger.error('Unhandled error:', err)); 
+main().catch(err => logger.error('Unhandled error:', err));
