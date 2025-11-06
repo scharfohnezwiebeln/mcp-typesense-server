@@ -35,6 +35,7 @@ jobs:
           docker build --no-cache \
             -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.BUILD_VERSION }} \
             -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.BUILD_VERSION_LATEST }} \
+            .
 
       - name: Push Docker images
         run: |
